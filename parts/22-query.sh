@@ -663,6 +663,59 @@ query_runtime-per-user() { ##? <email>: computation time of user (by email)
 	EOF
 }
 
+
+query_active-user-count() { ##? <hours>: Number of distinct users running jobs in past hours
+
+	fields="count=0"
+
+	read -r -d '' QUERY <<-EOF
+		SELECT
+			count(DISTINCT user_id) AS count
+		FROM
+			job
+		WHERE
+			update_time > now() - interval '$arg_hours hours'
+	EOF
+}
+
+
+query_jobs-terminal-summary() { ##? [--states=ok,error,deleted,stopped] [--create-time] [--newer-than=<interval>]: Summary of terminal jobs over a time period
+	states='ok,error,deleted,stopped'
+	interval='24 hours'
+	time_column='update_time'
+
+	if (( $# > 0 )); then
+		for args in "$@"; do
+			if [[ "$args" = '--create-time' ]]; then
+				time_column='create_time'
+			elif [[ "${args:0:9}" = '--states=' ]]; then
+				states="${args:9}"
+			elif [[ "${args:0:13}" = '--newer-than=' ]]; then
+				interval="${args:13}"
+			fi
+		done
+	fi
+
+	states="'$(echo "$states" | sed "s/,/', '/g")'"
+
+	fields="count=1"
+	tags="state=0"
+
+	read -r -d '' QUERY <<-EOF
+		SELECT
+			job.state, count(job.state) AS count
+		FROM
+			job
+		WHERE
+			job.state IN ($states)
+			AND job.$time_column > NOW() - interval '$interval'
+		GROUP BY
+			job.state
+		ORDER BY job.state ASC
+	EOF
+}
+
+
 query_jobs-nonterminal() { ## [--states=new,queued,running] [--update-time] [--older-than=<interval>] [--show-user=id|email|username] [username|id|email]: Job info of nonterminal jobs separated by user
 	handle_help "$@" <<-EOF
 		You can request the user information by username, id, and user email
@@ -740,7 +793,7 @@ query_jobs-nonterminal() { ## [--states=new,queued,running] [--update-time] [--o
 				states="${args:9}"
 			elif [[ "${args:0:13}" = '--older-than=' ]]; then
 				interval="${args:13}"
-			elif [[ "${args:0:2}" != '==' ]]; then
+			elif [[ "${args:0:2}" != '--' ]]; then
 				user_filter=$(get_user_filter "$1")
 			fi
 		done
